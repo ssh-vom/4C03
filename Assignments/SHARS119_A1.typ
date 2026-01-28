@@ -175,7 +175,7 @@
   number: 12, question: "What is the status code and phrase in the response?", answer: [
     The status code and phrase in the response is a 200 OK
     #figure(
-      image("assets/status_code_and_response_q12.png", width: 100%), caption: [],
+      image("assets/status_code_and_response_q12.png", width: 100%), caption: [Status code and Response],
     )<fig-status_code_and_response_q12>,
   ],
 )
