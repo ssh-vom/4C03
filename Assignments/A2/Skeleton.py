@@ -11,6 +11,7 @@ import os.path
 import glob
 import json
 import optparse
+MAX_PORT = 2**16
 
 def validate_ip(s):
     """
@@ -45,6 +46,9 @@ def validate_port(x):
             return False
     return True
 
+def filter_file_directory():
+    pass
+
 def get_file_info():
     """Get file info in the local directory (subdirectories are ignored).
     Return: a JSON array of {'name':file,'mtime':mtime}
@@ -52,11 +56,17 @@ def get_file_info():
     Hint: a. you can ignore subfolders, *.so, *.py, *.dll, and this script
           b. use os.path.getmtime to get mtime, and round down to integer
     """
-
-    file_arr = []
-    res = os.path.join(os.path.dirname(__file__))
-    print(res)
-    #YOUR CODE
+    """
+    mtime: is file's last modified time, rounded down to an integer (seconds since epoch)
+    files: list of files in peer's working directory
+    this is used for init message:
+    
+    {
+        "port": <int>,
+        "files": get_file_info()
+    }
+    """
+    file_arr = json.dumps(get_files_dic())
 
     return file_arr
 
@@ -64,8 +74,15 @@ def get_files_dic():
     """Get file info as a dictionary {name: mtime} in local directory.
     Hint: same filtering rules as get_file_info().
     """
-    file_dic = {}
-    #YOUR CODE
+    EXCLUDED_FILETYPES = [".py", ".dll", ".so"]
+    files = [
+        f
+        for f in os.listdir(".")
+        if os.path.isfile(os.path.join(".", f))
+        and not any(f.lower().endswith(e) for e in EXCLUDED_FILETYPES)
+    ]
+    file_dic = {f: round(os.path.getmtime(f)) for f in files}
+
 
     return file_dic
 
@@ -92,6 +109,13 @@ def get_next_avaliable_port(initial_port):
     port found to be available; False if no port is available.
     """
 
+    for port_num in range(initial_port, MAX_PORT):
+        if check_port_avaliable(port_num):
+            return port_num
+    
+    return False
+
+
     #YOUR CODE
 
 
@@ -101,12 +125,12 @@ class FileSynchronizer(threading.Thread):
         threading.Thread.__init__(self)
 
         #Own port and IP address for serving file requests to other peers
-        self.port = #YOUR CODE
-        self.host = #YOUR CODE
+        self.port = port
+        self.host = host
 
         #Tracker IP/hostname and port
-        self.trackerhost = #YOUR CODE
-        self.trackerport = #YOUR CODE
+        self.trackerhost = trackerhost
+        self.trackerport = trackerport
 
         self.BUFFER_SIZE = 8192
 
@@ -121,10 +145,11 @@ class FileSynchronizer(threading.Thread):
         #Refer to Table 1 in Instructions.pdf for the format of the Init message
         #You can use json.dumps to conver a python dictionary to a json string
 	#Encode using UTF-8
-        self.msg = #YOUR CODE
+    
+        self.msg = json.dumps({"port": self.port, "files": get_file_info()})
 
         #Create a TCP socket to serve file requests from peers.
-        self.server = #YOUR CODE
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         try:
             self.server.bind((self.host, self.port))
@@ -179,6 +204,9 @@ class FileSynchronizer(threading.Thread):
     #and  request files from peers
     def sync(self):
         print(('connect to:'+self.trackerhost,self.trackerport))
+
+        init_msg = {"port": self.port, "files": get_file_info()}
+
         #Step 1. send Init msg to tracker (Note init msg only sent once)
         #Since self.msg is already initialized in __init__, you can send directly
         #Hint: on send failure, may terminate
