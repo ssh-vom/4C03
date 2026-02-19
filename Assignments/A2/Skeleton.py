@@ -248,6 +248,7 @@ class FileSynchronizer(threading.Thread):
             except socket.error as e:
                 print(f"Failed to accept connection {e}")
                 self.server.close()
+                break
 
     # Send Init or KeepAlive message to tracker, handle directory response message
     # and  request files from peers
@@ -263,11 +264,17 @@ class FileSynchronizer(threading.Thread):
 
         # Step 2. now receive a directory response message from tracker
         directory_response_message = buff.get_line()
+        if directory_response_message is None:
+            print("Tracker connection closed")
+            return
         # Hint: read from socket until you receive a full JSON message ending with '\n'
         # YOUR CODE
         print("received from tracker:", directory_response_message)
-
-        tracker_files = json.loads(directory_response_message)
+        try:
+            tracker_files = json.loads(directory_response_message)
+        except json.JSONDecodeError:
+            print("Invalid JSON from tracker")
+            return
         local_files = get_files_dic()
 
         for filename, file_info in tracker_files.items():
@@ -314,36 +321,40 @@ class FileSynchronizer(threading.Thread):
         # grab file from peer
 
         peer = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        peer.connect((file_dic["ip"], file_dic["port"]))
-        # we connect now
-        peer.send((filename + "\n").encode("utf-8"))
-        buff = Buffer(peer)
-        header = buff.get_line()
-        if header:
-            header = header.removeprefix("Content-Length: ")
-            size = int(header)
-            if size:
-                data = b""
-                while len(data) < size:
-                    chunk = peer.recv(size - len(data))
-                    if not chunk:
-                        break
-                    data += chunk
-                if len(data) == size:
-                    partial_file = filename + ".part"
-                    try:
-                        with open(partial_file, mode="wb") as f:
-                            f.write(data)
-                        os.rename(partial_file, filename)
-                        os.utime(filename, (file_dic["mtime"], file_dic["mtime"]))
-                        print(f"Successfully downloaded {filename}")
-                        # rename a file
-                    except Exception as e:
-                        # clean up part file if it exists?
-                        if os.path.exists(partial_file):
-                            os.remove(partial_file)
-                        print(f"Failed to write due to {e}")
-                peer.close()
+        peer.settimeout(10)  # timeout on connection
+        try:
+            peer.connect((file_dic["ip"], file_dic["port"]))
+            # we connect now
+            peer.send((filename + "\n").encode("utf-8"))
+            buff = Buffer(peer)
+            header = buff.get_line()
+            if header:
+                header = header.removeprefix("Content-Length: ")
+                size = int(header)
+                if size:
+                    data = b""
+                    while len(data) < size:
+                        chunk = peer.recv(size - len(data))
+                        if not chunk:
+                            break
+                        data += chunk
+                    if len(data) == size:
+                        partial_file = filename + ".part"
+                        try:
+                            with open(partial_file, mode="wb") as f:
+                                f.write(data)
+                            os.rename(partial_file, filename)
+                            os.utime(filename, (file_dic["mtime"], file_dic["mtime"]))
+                            print(f"Successfully downloaded {filename}")
+                            # rename a file
+                        except Exception as e:
+                            # clean up part file if it exists?
+                            if os.path.exists(partial_file):
+                                os.remove(partial_file)
+                            print(f"Failed to write due to {e}")
+        except socket.timeout:
+            print(f"Timeout connecting to peer for {filename}")
+        peer.close()
 
         # YOUR CODE
         # Step 1. connect to peer and send filename + '\n'
