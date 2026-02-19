@@ -13,6 +13,22 @@ import json
 import optparse
 MAX_PORT = 2**16
 
+class Buffer:
+
+    def __init__(self, sock):
+        self.sock = sock
+        self.buffer = b''
+        self.delimiter = b'\n'
+
+    def get_line(self):
+        while self.delimiter not in self.buffer:
+            data = self.sock.recv(1024) # read a byte 
+            if not data:
+                return None
+            self.buffer += data
+        line, sep, self.buffer = self.buffer.partition(self.delimiter)
+        return line.decode()
+
 def validate_ip(s):
     """
     Validate the IP address of the correct format
@@ -66,7 +82,8 @@ def get_file_info():
         "files": get_file_info()
     }
     """
-    file_arr = json.dumps(get_files_dic())
+
+    file_arr = [{'name': name, 'mtime': mtime} for name, mtime in get_files_dic().items()]
 
     return file_arr
 
@@ -83,7 +100,6 @@ def get_files_dic():
     ]
     file_dic = {f: round(os.path.getmtime(f)) for f in files}
 
-
     return file_dic
 
 def check_port_avaliable(check_port):
@@ -97,7 +113,7 @@ def check_port_avaliable(check_port):
         return False
     return True
 	
-def get_next_avaliable_port(initial_port):
+def get_next_avaliable_port(initial_port: int):
     """Get the next available port by searching from initial_port to 2^16 - 1
        Hint: You can call the check_port_avaliable() function
              Return the port if found an available port
@@ -174,6 +190,7 @@ class FileSynchronizer(threading.Thread):
     # Not currently used. Ensure sockets are closed on disconnect
     def exit(self):
         self.server.close()
+        self.client.close()
 
     #Handle file request from a peer(i.e., send the file content to peers)
     def process_message(self, conn, addr):
@@ -184,6 +201,18 @@ class FileSynchronizer(threading.Thread):
         addr -- IP address of the peer (only used for testing purpose)
         '''
         #YOUR CODE
+        filename = ""
+        with conn: # automates enter and exit
+            print(f"Connected to {addr}")
+            buff = Buffer(conn)
+            filename = buff.get_line()
+            if filename:
+                with open(file=filename, mode='rb') as f:
+                    data = f.read()
+                    if data:
+                        conn.send(f"Content-Length: {len(data)}\n".encode('utf-8'))
+                        conn.send(data)
+        print(f"Disconnected from {addr}")
         #Step 1. read the file name terminated by '\n'
         #Step 2. read content of that file in binary mode
         #Step 3. send header "Content-Length: <size>\n" then file bytes
@@ -192,20 +221,29 @@ class FileSynchronizer(threading.Thread):
     def run(self):
         #Step 1. connect to tracker; on failure, may terminate
         #YOUR CODE
+        try:
+            self.client.connect((self.trackerhost,self.trackerport)) 
+        except socket.error as e:
+            print(f"Terminating on failed connection to tracker {e}")
+            return
         t = threading.Timer(2, self.sync)
         t.start()
         print(('Waiting for connections on port %s' % (self.port)))
         while True:
             #Hint: guard accept() with try/except and exit cleanly on failure
-            conn, addr = self.server.accept()
-            threading.Thread(target=self.process_message, args=(conn,addr)).start()
+            try:
+                conn, addr = self.server.accept()
+                threading.Thread(target=self.process_message, args=(conn,addr)).start()
+            except socket.error as e:
+                print(f"Failed to accept connection {e}")
+                self.server.close() 
 
     #Send Init or KeepAlive message to tracker, handle directory response message
     #and  request files from peers
     def sync(self):
         print(('connect to:'+self.trackerhost,self.trackerport))
 
-        init_msg = {"port": self.port, "files": get_file_info()}
+        self.client.send(self.msg)
 
         #Step 1. send Init msg to tracker (Note init msg only sent once)
         #Since self.msg is already initialized in __init__, you can send directly
@@ -274,5 +312,6 @@ if __name__ == '__main__':
             # get a free port
             synchronizer_port = get_next_avaliable_port(8000)
             synchronizer_thread = FileSynchronizer(tracker_ip,tracker_port,synchronizer_port)
+            synchronizer_thread.start()
         else:
             parser.error("Invalid ServerIP or ServerPort")
