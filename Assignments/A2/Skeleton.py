@@ -330,13 +330,20 @@ class FileSynchronizer(threading.Thread):
                         break
                     data += chunk
                 if len(data) == size:
+                    partial_file = filename + ".part"
                     try:
-                        with open(file=filename + ".part", mode="wb") as f:
+                        with open(partial_file, mode="wb") as f:
                             f.write(data)
-                            os.utime(filename, (file_dic["mtime"], file_dic["mtime"]))
+                        os.rename(partial_file, filename)
+                        os.utime(filename, (file_dic["mtime"], file_dic["mtime"]))
+                        print(f"Successfully downloaded {filename}")
+                        # rename a file
                     except Exception as e:
                         # clean up part file if it exists?
+                        if os.path.exists(partial_file):
+                            os.remove(partial_file)
                         print(f"Failed to write due to {e}")
+                peer.close()
 
         # YOUR CODE
         # Step 1. connect to peer and send filename + '\n'
