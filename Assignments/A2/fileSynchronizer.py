@@ -18,14 +18,15 @@ MAX_PORT = 2**16
 
 
 class Buffer:
-    def __init__(self, sock):
+    def __init__(self, sock, buffer_size):
         self.sock = sock
         self.buffer = b""
         self.delimiter = b"\n"
+        self.buffer_size = buffer_size
 
     def get_line(self):
         while self.delimiter not in self.buffer:
-            data = self.sock.recv(1024)  # read a byte
+            data = self.sock.recv(self.buffer_size)  # read a byte
             if not data:
                 return None
             self.buffer += data
@@ -158,7 +159,7 @@ class FileSynchronizer(threading.Thread):
         # Create a TCP socket to communicate with the tracker
         self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.client.settimeout(180)
-        self._tracker_buf = Buffer(self.client)
+        self._tracker_buf = Buffer(self.client, self.BUFFER_SIZE)
         self.msg = (
             json.dumps({"port": self.port, "files": get_file_info()}) + "\n"
         ).encode("utf-8")
@@ -203,12 +204,13 @@ class FileSynchronizer(threading.Thread):
             # Step 1. read the file name terminated by '\n'
             conn.settimeout(30)  #  set time out on the socket
             print(f"Connected to {addr}")
-            buff = Buffer(conn)
+            buff = Buffer(conn, self.BUFFER_SIZE)
             try:
                 filename = buff.get_line()
             except socket.timeout:
                 print(f"Timeout waiting for file from {addr}")
                 return
+
             if filename:
                 # Step 2. read content of that file in binary mode
                 with open(file=filename, mode="rb") as f:
@@ -305,7 +307,7 @@ class FileSynchronizer(threading.Thread):
             peer.connect((file_dic["ip"], file_dic["port"]))
             peer.send((filename + "\n").encode("utf-8"))
 
-            buff = Buffer(peer)
+            buff = Buffer(peer, self.BUFFER_SIZE)
             header = buff.get_line()
             # Step 2. read header "Content-Length: <size>\n"
             if header:
@@ -320,7 +322,7 @@ class FileSynchronizer(threading.Thread):
                     # Step 3. read exactly <size> bytes; if short, discard partial file
                     data = b""
                     while len(data) < size:
-                        chunk = peer.recv(size - len(data))
+                        chunk = peer.recv(min(self.BUFFER_SIZE, size - len(data)))
                         if not chunk:
                             break
                         data += chunk
