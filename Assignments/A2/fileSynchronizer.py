@@ -158,17 +158,11 @@ class FileSynchronizer(threading.Thread):
         # Create a TCP socket to communicate with the tracker
         self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.client.settimeout(180)
-        self._tracker_buf = b""
-
-        # Store the message to be sent to the tracker.
-        # Initialize to the Init message that contains port number and file info.
-        # Refer to Table 1 in Instructions.pdf for the format of the Init message
-        # You can use json.dumps to conver a python dictionary to a json string
-        # Encode using UTF-8
-
-        self.msg = (
+        self._tracker_buf = (
             json.dumps({"port": self.port, "files": get_file_info()}) + "\n"
         ).encode("utf-8")
+        # tracker message of port and files from a peer
+        self.msg = self._tracker_buf
 
         # Create a TCP socket to serve file requests from peers.
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -300,24 +294,26 @@ class FileSynchronizer(threading.Thread):
         filename -- file name to request
         file_dic -- dict with 'ip', 'port', and 'mtime'
         """
-        # Step 1. connect to peer and send filename + '\n'
-        # Step 2. read header "Content-Length: <size>\n"
-        # Step 3. read exactly <size> bytes; if short, discard partial file
-        # Step 4. write file to disk (binary), rename from .part when done
-        # Step 5. set mtime using os.utime
 
         peer = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         peer.settimeout(10)  # timeout on connection
         try:
+            # Step 1. connect to peer and send filename + '\n'
             peer.connect((file_dic["ip"], file_dic["port"]))
-            # we connect now
             peer.send((filename + "\n").encode("utf-8"))
+
             buff = Buffer(peer)
             header = buff.get_line()
+            # Step 2. read header "Content-Length: <size>\n"
             if header:
-                header = header.removeprefix("Content-Length: ")
-                size = int(header)
+                # Remove the prefix for content length to grab the <size>
+                _, size = header.split("Content-Length: ")
+                try:
+                    size = int(size)
+                except:
+                    pass
                 if size:
+                    # Step 3. read exactly <size> bytes; if short, discard partial file
                     data = b""
                     while len(data) < size:
                         chunk = peer.recv(size - len(data))
@@ -326,13 +322,14 @@ class FileSynchronizer(threading.Thread):
                         data += chunk
                     if len(data) == size:
                         partial_file = filename + ".part"
+                        # Step 4. write file to disk (binary), rename from .part when done
                         try:
                             with open(partial_file, mode="wb") as f:
                                 f.write(data)
                             os.rename(partial_file, filename)
+                            # Step 5. set mtime using os.utime
                             os.utime(filename, (file_dic["mtime"], file_dic["mtime"]))
                             print(f"Successfully downloaded {filename}")
-                            # rename a file
                         except Exception as e:
                             # clean up part file if it exists?
                             if os.path.exists(partial_file):
