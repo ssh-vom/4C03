@@ -201,9 +201,14 @@ class FileSynchronizer(threading.Thread):
         filename = ""
         with conn:  # automates enter and exit
             # Step 1. read the file name terminated by '\n'
+            conn.settimeout(30)  #  set time out on the socket
             print(f"Connected to {addr}")
             buff = Buffer(conn)
-            filename = buff.get_line()
+            try:
+                filename = buff.get_line()
+            except socket.timeout:
+                print(f"Timeout waiting for file from {addr}")
+                return
             if filename:
                 # Step 2. read content of that file in binary mode
                 with open(file=filename, mode="rb") as f:
@@ -249,7 +254,11 @@ class FileSynchronizer(threading.Thread):
             self.fatal_tracker("Failed to send init message", e)
         # Step 2. now receive a directory response message from tracker
         # Hint: read from socket until you receive a full JSON message ending with '\n'
-        directory_response_message = self._tracker_buf.get_line()
+        try:
+            directory_response_message = self._tracker_buf.get_line()
+        except socket.timeout as e:
+            self.fatal_tracker("Failed waiting for the tracker to response", e)
+
         if directory_response_message is None:
             self.fatal_tracker("No directory response, tracker connection is closed")
 
@@ -304,8 +313,9 @@ class FileSynchronizer(threading.Thread):
                 _, size = header.split("Content-Length: ")
                 try:
                     size = int(size)
-                except:
-                    pass
+                except (ValueError, TypeError) as e:
+                    print(f"Invalid Content-Length header {e}")
+                    return
                 if size:
                     # Step 3. read exactly <size> bytes; if short, discard partial file
                     data = b""
