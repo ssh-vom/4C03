@@ -104,7 +104,7 @@ def get_files_dic():
         if os.path.isfile(os.path.join(".", f))
         and not any(f.lower().endswith(e) for e in EXCLUDED_FILETYPES)
     ]
-    file_dic = {f: round(os.path.getmtime(f)) for f in files}
+    file_dic = {f: int(os.path.getmtime(f)) for f in files}
 
     return file_dic
 
@@ -158,11 +158,10 @@ class FileSynchronizer(threading.Thread):
         # Create a TCP socket to communicate with the tracker
         self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.client.settimeout(180)
-        self._tracker_buf = (
+        self._tracker_buf = Buffer(self.client)
+        self.msg = (
             json.dumps({"port": self.port, "files": get_file_info()}) + "\n"
         ).encode("utf-8")
-        # tracker message of port and files from a peer
-        self.msg = self._tracker_buf
 
         # Create a TCP socket to serve file requests from peers.
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -209,10 +208,9 @@ class FileSynchronizer(threading.Thread):
                 # Step 2. read content of that file in binary mode
                 with open(file=filename, mode="rb") as f:
                     data = f.read()
-                    if data:
-                        # Step 3. send header "Content-Length: <size>\n" then file bytes
-                        conn.send(f"Content-Length: {len(data)}\n".encode("utf-8"))
-                        conn.send(data)
+                    # Step 3. send header "Content-Length: <size>\n" then file bytes
+                    conn.send(f"Content-Length: {len(data)}\n".encode("utf-8"))
+                    conn.send(data)
         print(f"Disconnected from {addr}")
 
         # Step 4. close conn when you are done.
@@ -223,8 +221,7 @@ class FileSynchronizer(threading.Thread):
         try:
             self.client.connect((self.trackerhost, self.trackerport))
         except socket.error as e:
-            print(f"Terminating on failed connection to tracker {e}")
-            return
+            self.fatal_tracker("Terminating on failed connection to tracker", e)
         t = threading.Timer(2, self.sync)
         t.start()
         print(("Waiting for connections on port %s" % (self.port)))
@@ -235,7 +232,7 @@ class FileSynchronizer(threading.Thread):
                 threading.Thread(target=self.process_message, args=(conn, addr)).start()
             except socket.error as e:
                 print(f"Failed to accept connection {e}")
-                self.server.close()  # on fail we close server conn
+                self.exit()  # on fail we close server and client connection
                 break
 
     def sync(self):
@@ -249,21 +246,18 @@ class FileSynchronizer(threading.Thread):
         try:
             self.client.send(self.msg)
         except socket.error as e:
-            print(f"Failed to send init message {e}")
-            return  # terminate
+            self.fatal_tracker("Failed to send init message", e)
         # Step 2. now receive a directory response message from tracker
         # Hint: read from socket until you receive a full JSON message ending with '\n'
-        buff = Buffer(self.client)
-        directory_response_message = buff.get_line()
+        directory_response_message = self._tracker_buf.get_line()
         if directory_response_message is None:
-            print("Tracker connection closed")
-            return
+            self.fatal_tracker("No directory response, tracker connection is closed")
+
         print("received from tracker:", directory_response_message)
         try:
             tracker_files = json.loads(directory_response_message)
-        except json.JSONDecodeError:
-            print("Invalid JSON from tracker")
-            return
+        except json.JSONDecodeError as e:
+            self.fatal_tracker("Invalid JSON from tracker", e)
         local_files = get_files_dic()
 
         for filename, file_info in tracker_files.items():
@@ -335,8 +329,8 @@ class FileSynchronizer(threading.Thread):
                             if os.path.exists(partial_file):
                                 os.remove(partial_file)
                             print(f"Failed to write due to {e}")
-        except socket.timeout:
-            print(f"Timeout connecting to peer for {filename}")
+        except (socket.timeout, socket.error) as e:
+            print(f"Timeout connecting to peer for {filename}: {e}")
         peer.close()
 
 
